@@ -1,16 +1,12 @@
 /**
  * Reportli AI — Composio OAuth Callback Worker
  *
- * Flow:
- * Composio
- *    ↓
- * /composio-callback
- *    ↓
- * Find connected account
- *    ↓
- * Save to Supabase user_integrations
- *    ↓
- * Redirect to https://reportliai.sbs
+ * Composio callback:
+ * GET /
+ * ?userId=...
+ * &toolId=gmail
+ * &status=success
+ * &connected_account_id=ca_...
  *
  * Required Cloudflare secrets:
  * SUPABASE_URL
@@ -21,158 +17,246 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // Only allow GET callback
-    if (url.pathname !== "/composio-callback") {
-      return new Response("Not Found", { status: 404 });
-    }
+    // --------------------------------------------------
+    // 1. Only allow GET
+    // --------------------------------------------------
 
     if (request.method !== "GET") {
-      return new Response("Method Not Allowed", { status: 405 });
+      return new Response("Method Not Allowed", {
+        status: 405,
+        headers: {
+          "Content-Type": "text/plain"
+        }
+      });
     }
 
+    // --------------------------------------------------
+    // 2. Handle favicon so browser doesn't create noise
+    // --------------------------------------------------
+
+    if (url.pathname === "/favicon.ico") {
+      return new Response(null, {
+        status: 204
+      });
+    }
+
+    // --------------------------------------------------
+    // 3. Read Composio callback parameters
+    // --------------------------------------------------
+
+    const userId = url.searchParams.get("userId");
+    const toolId = url.searchParams.get("toolId");
+    const status = url.searchParams.get("status");
+    const connectionId = url.searchParams.get(
+      "connected_account_id"
+    );
+
+    console.log("========== COMPOSIO CALLBACK ==========");
+
+    console.log("Path:", url.pathname);
+    console.log("User ID:", userId);
+    console.log("Tool ID:", toolId);
+    console.log("Status:", status);
+    console.log("Connection ID:", connectionId);
+
+    // --------------------------------------------------
+    // 4. Validate required parameters
+    // --------------------------------------------------
+
+    if (!userId) {
+      console.error("Missing userId");
+
+      return redirectError(
+        "Missing userId"
+      );
+    }
+
+    if (!toolId) {
+      console.error("Missing toolId");
+
+      return redirectError(
+        "Missing toolId"
+      );
+    }
+
+    if (!connectionId) {
+      console.error(
+        "Missing connected_account_id"
+      );
+
+      return redirectError(
+        "Missing connected_account_id"
+      );
+    }
+
+    // --------------------------------------------------
+    // 5. Check OAuth status
+    // --------------------------------------------------
+
+    if (status !== "success") {
+      console.error(
+        "Composio OAuth was not successful:",
+        status
+      );
+
+      return redirectError(
+        "Composio connection was not successful"
+      );
+    }
+
+    // --------------------------------------------------
+    // 6. Allow only Reportli integrations
+    // --------------------------------------------------
+
+    const allowedIntegrations = [
+      "gmail",
+      "reddit",
+      "google-calendar",
+      "google-meet",
+      "apollo",
+      "x"
+    ];
+
+    if (!allowedIntegrations.includes(toolId)) {
+      console.error(
+        "Invalid integration:",
+        toolId
+      );
+
+      return redirectError(
+        "Invalid integration"
+      );
+    }
+
+    // --------------------------------------------------
+    // 7. Check Supabase environment variables
+    // --------------------------------------------------
+
+    if (!env.SUPABASE_URL) {
+      console.error(
+        "SUPABASE_URL secret is missing"
+      );
+
+      return redirectError(
+        "Supabase URL is not configured"
+      );
+    }
+
+    if (!env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error(
+        "SUPABASE_SERVICE_ROLE_KEY secret is missing"
+      );
+
+      return redirectError(
+        "Supabase service role key is not configured"
+      );
+    }
+
+    // --------------------------------------------------
+    // 8. Save integration to Supabase
+    // --------------------------------------------------
+
     try {
-      /**
-       * ---------------------------------------------------------
-       * 1. Read callback parameters
-       * ---------------------------------------------------------
-       */
+      const supabaseUrl =
+        env.SUPABASE_URL.replace(/\/$/, "");
 
-      const userId = url.searchParams.get("user_id");
-      const integrationId = url.searchParams.get("integration_id");
+      const endpoint =
+        `${supabaseUrl}/rest/v1/user_integrations` +
+        `?on_conflict=user_id,integration_id`;
 
-      // Composio connected account ID.
-      // The exact parameter name depends on your Composio flow.
-      const connectionId =
-        url.searchParams.get("connection_id") ||
-        url.searchParams.get("connected_account_id");
+      const payload = {
+        user_id: userId,
+        integration_id: toolId,
+        connection_id: connectionId,
+        status: "connected",
+        updated_at: new Date().toISOString()
+      };
 
-      const accountName =
-        url.searchParams.get("account_name") ||
-        url.searchParams.get("name") ||
-        null;
+      console.log(
+        "Saving integration:",
+        JSON.stringify(payload)
+      );
 
-      const accountEmail =
-        url.searchParams.get("account_email") ||
-        url.searchParams.get("email") ||
-        null;
-
-      /**
-       * ---------------------------------------------------------
-       * 2. Validate required information
-       * ---------------------------------------------------------
-       */
-
-      if (!userId) {
-        return redirectWithError(
-          "Missing user_id",
-          env
-        );
-      }
-
-      if (!integrationId) {
-        return redirectWithError(
-          "Missing integration_id",
-          env
-        );
-      }
-
-      if (!connectionId) {
-        return redirectWithError(
-          "Missing Composio connection ID",
-          env
-        );
-      }
-
-      /**
-       * ---------------------------------------------------------
-       * 3. Validate integration
-       * ---------------------------------------------------------
-       */
-
-      const allowedIntegrations = [
-        "gmail",
-        "x",
-        "reddit",
-        "google-meet"
-      ];
-
-      if (!allowedIntegrations.includes(integrationId)) {
-        return redirectWithError(
-          "Invalid integration",
-          env
-        );
-      }
-
-      /**
-       * ---------------------------------------------------------
-       * 4. Save to Supabase
-       * ---------------------------------------------------------
-       */
-
-      const supabaseUrl = env.SUPABASE_URL.replace(/\/$/, "");
-
-      const response = await fetch(
-        `${supabaseUrl}/rest/v1/user_integrations?on_conflict=user_id,integration_id`,
+      const supabaseResponse = await fetch(
+        endpoint,
         {
           method: "POST",
 
           headers: {
-            "apikey": env.SUPABASE_SERVICE_ROLE_KEY,
-            "Authorization": `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates,return=representation"
+            "apikey":
+              env.SUPABASE_SERVICE_ROLE_KEY,
+
+            "Authorization":
+              `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+
+            "Content-Type":
+              "application/json",
+
+            "Prefer":
+              "resolution=merge-duplicates,return=representation"
           },
 
-          body: JSON.stringify({
-            user_id: userId,
-            integration_id: integrationId,
-            connection_id: connectionId,
-            account_name: accountName,
-            account_email: accountEmail,
-            status: "connected",
-            updated_at: new Date().toISOString()
-          })
+          body: JSON.stringify(payload)
         }
       );
 
-      /**
-       * ---------------------------------------------------------
-       * 5. Check Supabase result
-       * ---------------------------------------------------------
-       */
+      const responseText =
+        await supabaseResponse.text();
 
-      if (!response.ok) {
-        const errorText = await response.text();
+      console.log(
+        "Supabase HTTP status:",
+        supabaseResponse.status
+      );
 
+      console.log(
+        "Supabase response:",
+        responseText
+      );
+
+      // --------------------------------------------------
+      // 9. Handle Supabase failure
+      // --------------------------------------------------
+
+      if (!supabaseResponse.ok) {
         console.error(
-          "Supabase error:",
-          errorText
+          "Supabase INSERT/UPSERT failed"
         );
 
-        return redirectWithError(
-          "Failed to save integration",
-          env
+        return redirectError(
+          "Failed to save integration"
         );
       }
 
-      /**
-       * ---------------------------------------------------------
-       * 6. Success
-       * ---------------------------------------------------------
-       */
-
-      const saved = await response.json();
+      // --------------------------------------------------
+      // 10. Success
+      // --------------------------------------------------
 
       console.log(
-        "Integration saved successfully:",
-        JSON.stringify(saved)
+        "========================================"
       );
 
-      /**
-       * ---------------------------------------------------------
-       * 7. Redirect user back to Reportli
-       * ---------------------------------------------------------
-       */
+      console.log(
+        "INTEGRATION SAVED SUCCESSFULLY"
+      );
+
+      console.log(
+        "User:",
+        userId
+      );
+
+      console.log(
+        "Integration:",
+        toolId
+      );
+
+      console.log(
+        "Connection:",
+        connectionId
+      );
+
+      console.log(
+        "========================================"
+      );
 
       return Response.redirect(
         "https://reportliai.sbs?integration=connected",
@@ -180,15 +264,13 @@ export default {
       );
 
     } catch (error) {
-
       console.error(
-        "Callback error:",
+        "Unexpected Worker error:",
         error
       );
 
-      return redirectWithError(
-        "OAuth callback failed",
-        env
+      return redirectError(
+        "Callback processing failed"
       );
     }
   }
@@ -196,13 +278,9 @@ export default {
 
 
 /**
- * Redirect back to Reportli with an error.
- *
- * Do NOT expose internal errors,
- * Supabase keys, or stack traces.
+ * Redirect user back to Reportli with an error.
  */
-function redirectWithError(message, env) {
-
+function redirectError(message) {
   const redirectUrl =
     new URL("https://reportliai.sbs");
 
@@ -220,4 +298,4 @@ function redirectWithError(message, env) {
     redirectUrl.toString(),
     302
   );
-  }
+        }
