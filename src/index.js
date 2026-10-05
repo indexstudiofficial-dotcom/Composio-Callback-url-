@@ -7,6 +7,8 @@
  * ?userId=...
  * &application_id=...
  * &appId=...
+ * &applicationId=...
+ * &activeAppId=...
  * &toolId=gmail
  * &status=success
  * &connected_account_id=ca_...
@@ -48,26 +50,44 @@ export default {
     // ==================================================
 
     const userId =
-      url.searchParams.get("userId");
-
-    const applicationId =
-      url.searchParams.get("application_id") ||
-      url.searchParams.get("appId") ||
-      url.searchParams.get("applicationId");
+      url.searchParams.get("userId") ||
+      url.searchParams.get("user_id");
 
     const toolId =
-      url.searchParams.get("toolId");
+      url.searchParams.get("toolId") ||
+      url.searchParams.get("tool_id");
 
     const status =
       url.searchParams.get("status");
 
     const connectionId =
-      url.searchParams.get(
-        "connected_account_id"
-      );
+      url.searchParams.get("connected_account_id") ||
+      url.searchParams.get("connection_id");
+
+    // ==================================================
+    // 4. APPLICATION ID
+    //
+    // Accept every name used by your frontend/API.
+    // ==================================================
+
+    const applicationId =
+      url.searchParams.get("application_id") ||
+      url.searchParams.get("applicationId") ||
+      url.searchParams.get("appId") ||
+      url.searchParams.get("activeAppId") ||
+      url.searchParams.get("active_app_id");
+
+    // ==================================================
+    // 5. LOG EVERYTHING
+    // ==================================================
 
     console.log(
       "========== COMPOSIO CALLBACK =========="
+    );
+
+    console.log(
+      "Full URL:",
+      request.url
     );
 
     console.log(
@@ -100,13 +120,17 @@ export default {
       connectionId
     );
 
+    console.log(
+      "========================================"
+    );
+
     // ==================================================
-    // 4. VALIDATE USER ID
+    // 6. VALIDATE USER ID
     // ==================================================
 
     if (!userId) {
       console.error(
-        "Missing userId"
+        "❌ Missing userId"
       );
 
       return redirectError(
@@ -115,13 +139,23 @@ export default {
     }
 
     // ==================================================
-    // 5. VALIDATE APPLICATION ID
+    // 7. VALIDATE APPLICATION ID
     // ==================================================
 
     if (!applicationId) {
       console.error(
-        "Missing application_id"
+        "❌ Missing application_id"
       );
+
+      console.error(
+        "Received query parameters:"
+      );
+
+      for (const [key, value] of url.searchParams.entries()) {
+        console.error(
+          `${key} = ${value}`
+        );
+      }
 
       return redirectError(
         "Missing application_id"
@@ -129,12 +163,12 @@ export default {
     }
 
     // ==================================================
-    // 6. VALIDATE TOOL ID
+    // 8. VALIDATE TOOL ID
     // ==================================================
 
     if (!toolId) {
       console.error(
-        "Missing toolId"
+        "❌ Missing toolId"
       );
 
       return redirectError(
@@ -143,12 +177,12 @@ export default {
     }
 
     // ==================================================
-    // 7. VALIDATE CONNECTION ID
+    // 9. VALIDATE CONNECTION ID
     // ==================================================
 
     if (!connectionId) {
       console.error(
-        "Missing connected_account_id"
+        "❌ Missing connected_account_id"
       );
 
       return redirectError(
@@ -157,12 +191,12 @@ export default {
     }
 
     // ==================================================
-    // 8. CHECK OAUTH STATUS
+    // 10. CHECK OAUTH STATUS
     // ==================================================
 
     if (status !== "success") {
       console.error(
-        "Composio OAuth was not successful:",
+        "❌ Composio OAuth was not successful:",
         status
       );
 
@@ -172,7 +206,7 @@ export default {
     }
 
     // ==================================================
-    // 9. ALLOWED REPORTLI INTEGRATIONS
+    // 11. ALLOWED REPORTLI INTEGRATIONS
     // ==================================================
 
     const allowedIntegrations = [
@@ -186,7 +220,7 @@ export default {
 
     if (!allowedIntegrations.includes(toolId)) {
       console.error(
-        "Invalid integration:",
+        "❌ Invalid integration:",
         toolId
       );
 
@@ -196,12 +230,12 @@ export default {
     }
 
     // ==================================================
-    // 10. CHECK SUPABASE SECRETS
+    // 12. CHECK SUPABASE SECRETS
     // ==================================================
 
     if (!env.SUPABASE_URL) {
       console.error(
-        "SUPABASE_URL secret is missing"
+        "❌ SUPABASE_URL secret is missing"
       );
 
       return redirectError(
@@ -211,7 +245,7 @@ export default {
 
     if (!env.SUPABASE_SERVICE_ROLE_KEY) {
       console.error(
-        "SUPABASE_SERVICE_ROLE_KEY secret is missing"
+        "❌ SUPABASE_SERVICE_ROLE_KEY secret is missing"
       );
 
       return redirectError(
@@ -220,7 +254,7 @@ export default {
     }
 
     // ==================================================
-    // 11. SAVE INTEGRATION TO SUPABASE
+    // 13. SAVE INTEGRATION TO SUPABASE
     // ==================================================
 
     try {
@@ -230,24 +264,41 @@ export default {
           ""
         );
 
+      // IMPORTANT:
+      //
+      // Your database constraint must be:
+      //
+      // UNIQUE(application_id, integration_id)
+      //
       const endpoint =
         `${supabaseUrl}/rest/v1/user_integrations` +
         `?on_conflict=application_id,integration_id`;
 
+      // ==================================================
+      // 14. CREATE DATABASE PAYLOAD
+      // ==================================================
+
       const payload = {
         user_id: userId,
+
         application_id: applicationId,
+
         integration_id: toolId,
+
         connection_id: connectionId,
+
         status: "connected",
-        updated_at: new Date().toISOString()
+
+        updated_at:
+          new Date().toISOString()
       };
 
       console.log(
-        "Saving integration:"
+        "========== SUPABASE UPSERT =========="
       );
 
       console.log(
+        "Payload:",
         JSON.stringify(
           payload,
           null,
@@ -255,8 +306,13 @@ export default {
         )
       );
 
+      console.log(
+        "Endpoint:",
+        endpoint
+      );
+
       // ==================================================
-      // 12. SUPABASE UPSERT
+      // 15. UPSERT INTO SUPABASE
       // ==================================================
 
       const supabaseResponse =
@@ -284,6 +340,10 @@ export default {
           }
         );
 
+      // ==================================================
+      // 16. READ SUPABASE RESPONSE
+      // ==================================================
+
       const responseText =
         await supabaseResponse.text();
 
@@ -298,12 +358,12 @@ export default {
       );
 
       // ==================================================
-      // 13. HANDLE SUPABASE FAILURE
+      // 17. HANDLE SUPABASE FAILURE
       // ==================================================
 
       if (!supabaseResponse.ok) {
         console.error(
-          "Supabase INSERT/UPSERT failed"
+          "❌ Supabase INSERT/UPSERT failed"
         );
 
         return redirectError(
@@ -312,7 +372,7 @@ export default {
       }
 
       // ==================================================
-      // 14. SUCCESS LOG
+      // 18. SUCCESS
       // ==================================================
 
       console.log(
@@ -320,7 +380,7 @@ export default {
       );
 
       console.log(
-        "INTEGRATION SAVED SUCCESSFULLY"
+        "✅ INTEGRATION SAVED SUCCESSFULLY"
       );
 
       console.log(
@@ -348,7 +408,7 @@ export default {
       );
 
       // ==================================================
-      // 15. REDIRECT BACK TO REPORTLI
+      // 19. REDIRECT BACK TO REPORTLI
       // ==================================================
 
       const successUrl =
@@ -378,11 +438,11 @@ export default {
 
     } catch (error) {
       // ==================================================
-      // 16. UNEXPECTED ERROR
+      // 20. UNEXPECTED ERROR
       // ==================================================
 
       console.error(
-        "Unexpected Worker error:",
+        "❌ Unexpected Worker error:",
         error
       );
 
@@ -420,4 +480,4 @@ function redirectError(message) {
     redirectUrl.toString(),
     302
   );
-  }
+        }
