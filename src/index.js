@@ -1,9 +1,12 @@
 /**
  * Reportli AI — Composio OAuth Callback Worker
  *
- * Composio callback:
+ * Callback URL:
+ *
  * GET /
  * ?userId=...
+ * &application_id=...
+ * &appId=...
  * &toolId=gmail
  * &status=success
  * &connected_account_id=ca_...
@@ -17,9 +20,9 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // --------------------------------------------------
-    // 1. Only allow GET
-    // --------------------------------------------------
+    // ==================================================
+    // 1. ONLY ALLOW GET
+    // ==================================================
 
     if (request.method !== "GET") {
       return new Response("Method Not Allowed", {
@@ -30,9 +33,9 @@ export default {
       });
     }
 
-    // --------------------------------------------------
-    // 2. Handle favicon so browser doesn't create noise
-    // --------------------------------------------------
+    // ==================================================
+    // 2. IGNORE FAVICON
+    // ==================================================
 
     if (url.pathname === "/favicon.ico") {
       return new Response(null, {
@@ -40,44 +43,108 @@ export default {
       });
     }
 
-    // --------------------------------------------------
-    // 3. Read Composio callback parameters
-    // --------------------------------------------------
+    // ==================================================
+    // 3. READ COMPOSIO CALLBACK PARAMETERS
+    // ==================================================
 
-    const userId = url.searchParams.get("userId");
-    const toolId = url.searchParams.get("toolId");
-    const status = url.searchParams.get("status");
-    const connectionId = url.searchParams.get(
-      "connected_account_id"
+    const userId =
+      url.searchParams.get("userId");
+
+    const applicationId =
+      url.searchParams.get("application_id") ||
+      url.searchParams.get("appId") ||
+      url.searchParams.get("applicationId");
+
+    const toolId =
+      url.searchParams.get("toolId");
+
+    const status =
+      url.searchParams.get("status");
+
+    const connectionId =
+      url.searchParams.get(
+        "connected_account_id"
+      );
+
+    console.log(
+      "========== COMPOSIO CALLBACK =========="
     );
 
-    console.log("========== COMPOSIO CALLBACK ==========");
+    console.log(
+      "Path:",
+      url.pathname
+    );
 
-    console.log("Path:", url.pathname);
-    console.log("User ID:", userId);
-    console.log("Tool ID:", toolId);
-    console.log("Status:", status);
-    console.log("Connection ID:", connectionId);
+    console.log(
+      "User ID:",
+      userId
+    );
 
-    // --------------------------------------------------
-    // 4. Validate required parameters
-    // --------------------------------------------------
+    console.log(
+      "Application ID:",
+      applicationId
+    );
+
+    console.log(
+      "Tool ID:",
+      toolId
+    );
+
+    console.log(
+      "Status:",
+      status
+    );
+
+    console.log(
+      "Connection ID:",
+      connectionId
+    );
+
+    // ==================================================
+    // 4. VALIDATE USER ID
+    // ==================================================
 
     if (!userId) {
-      console.error("Missing userId");
+      console.error(
+        "Missing userId"
+      );
 
       return redirectError(
         "Missing userId"
       );
     }
 
+    // ==================================================
+    // 5. VALIDATE APPLICATION ID
+    // ==================================================
+
+    if (!applicationId) {
+      console.error(
+        "Missing application_id"
+      );
+
+      return redirectError(
+        "Missing application_id"
+      );
+    }
+
+    // ==================================================
+    // 6. VALIDATE TOOL ID
+    // ==================================================
+
     if (!toolId) {
-      console.error("Missing toolId");
+      console.error(
+        "Missing toolId"
+      );
 
       return redirectError(
         "Missing toolId"
       );
     }
+
+    // ==================================================
+    // 7. VALIDATE CONNECTION ID
+    // ==================================================
 
     if (!connectionId) {
       console.error(
@@ -89,9 +156,9 @@ export default {
       );
     }
 
-    // --------------------------------------------------
-    // 5. Check OAuth status
-    // --------------------------------------------------
+    // ==================================================
+    // 8. CHECK OAUTH STATUS
+    // ==================================================
 
     if (status !== "success") {
       console.error(
@@ -104,9 +171,9 @@ export default {
       );
     }
 
-    // --------------------------------------------------
-    // 6. Allow only Reportli integrations
-    // --------------------------------------------------
+    // ==================================================
+    // 9. ALLOWED REPORTLI INTEGRATIONS
+    // ==================================================
 
     const allowedIntegrations = [
       "gmail",
@@ -128,9 +195,9 @@ export default {
       );
     }
 
-    // --------------------------------------------------
-    // 7. Check Supabase environment variables
-    // --------------------------------------------------
+    // ==================================================
+    // 10. CHECK SUPABASE SECRETS
+    // ==================================================
 
     if (!env.SUPABASE_URL) {
       console.error(
@@ -152,20 +219,24 @@ export default {
       );
     }
 
-    // --------------------------------------------------
-    // 8. Save integration to Supabase
-    // --------------------------------------------------
+    // ==================================================
+    // 11. SAVE INTEGRATION TO SUPABASE
+    // ==================================================
 
     try {
       const supabaseUrl =
-        env.SUPABASE_URL.replace(/\/$/, "");
+        env.SUPABASE_URL.replace(
+          /\/$/,
+          ""
+        );
 
       const endpoint =
         `${supabaseUrl}/rest/v1/user_integrations` +
-        `?on_conflict=user_id,integration_id`;
+        `?on_conflict=application_id,integration_id`;
 
       const payload = {
         user_id: userId,
+        application_id: applicationId,
         integration_id: toolId,
         connection_id: connectionId,
         status: "connected",
@@ -173,32 +244,45 @@ export default {
       };
 
       console.log(
-        "Saving integration:",
-        JSON.stringify(payload)
+        "Saving integration:"
       );
 
-      const supabaseResponse = await fetch(
-        endpoint,
-        {
-          method: "POST",
-
-          headers: {
-            "apikey":
-              env.SUPABASE_SERVICE_ROLE_KEY,
-
-            "Authorization":
-              `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-
-            "Content-Type":
-              "application/json",
-
-            "Prefer":
-              "resolution=merge-duplicates,return=representation"
-          },
-
-          body: JSON.stringify(payload)
-        }
+      console.log(
+        JSON.stringify(
+          payload,
+          null,
+          2
+        )
       );
+
+      // ==================================================
+      // 12. SUPABASE UPSERT
+      // ==================================================
+
+      const supabaseResponse =
+        await fetch(
+          endpoint,
+          {
+            method: "POST",
+
+            headers: {
+              "apikey":
+                env.SUPABASE_SERVICE_ROLE_KEY,
+
+              "Authorization":
+                `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+
+              "Content-Type":
+                "application/json",
+
+              "Prefer":
+                "resolution=merge-duplicates,return=representation"
+            },
+
+            body:
+              JSON.stringify(payload)
+          }
+        );
 
       const responseText =
         await supabaseResponse.text();
@@ -213,9 +297,9 @@ export default {
         responseText
       );
 
-      // --------------------------------------------------
-      // 9. Handle Supabase failure
-      // --------------------------------------------------
+      // ==================================================
+      // 13. HANDLE SUPABASE FAILURE
+      // ==================================================
 
       if (!supabaseResponse.ok) {
         console.error(
@@ -227,9 +311,9 @@ export default {
         );
       }
 
-      // --------------------------------------------------
-      // 10. Success
-      // --------------------------------------------------
+      // ==================================================
+      // 14. SUCCESS LOG
+      // ==================================================
 
       console.log(
         "========================================"
@@ -242,6 +326,11 @@ export default {
       console.log(
         "User:",
         userId
+      );
+
+      console.log(
+        "Application:",
+        applicationId
       );
 
       console.log(
@@ -258,12 +347,40 @@ export default {
         "========================================"
       );
 
+      // ==================================================
+      // 15. REDIRECT BACK TO REPORTLI
+      // ==================================================
+
+      const successUrl =
+        new URL(
+          "https://reportliai.sbs"
+        );
+
+      successUrl.searchParams.set(
+        "integration",
+        "connected"
+      );
+
+      successUrl.searchParams.set(
+        "application_id",
+        applicationId
+      );
+
+      successUrl.searchParams.set(
+        "tool",
+        toolId
+      );
+
       return Response.redirect(
-        "https://reportliai.sbs?integration=connected",
+        successUrl.toString(),
         302
       );
 
     } catch (error) {
+      // ==================================================
+      // 16. UNEXPECTED ERROR
+      // ==================================================
+
       console.error(
         "Unexpected Worker error:",
         error
@@ -278,11 +395,16 @@ export default {
 
 
 /**
- * Redirect user back to Reportli with an error.
+ * ======================================================
+ * ERROR REDIRECT
+ * ======================================================
  */
+
 function redirectError(message) {
   const redirectUrl =
-    new URL("https://reportliai.sbs");
+    new URL(
+      "https://reportliai.sbs"
+    );
 
   redirectUrl.searchParams.set(
     "integration",
@@ -298,4 +420,4 @@ function redirectError(message) {
     redirectUrl.toString(),
     302
   );
-        }
+  }
